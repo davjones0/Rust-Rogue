@@ -1,0 +1,6 @@
+split map, objects, and key list to seperate modules
+add z levels to map :vec within each tile on the original vec
+material properties
+figure out a setting/theme :giant robot, super hero etc....
+add a friction score to each tile for when sliding is implemented
+add a force score behind attacks
