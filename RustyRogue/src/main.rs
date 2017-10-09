@@ -44,6 +44,13 @@ impl Tile {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PlayerAction {
+    TookTurn,
+    DidntTakeTurn,
+    Exit,
+}
+
 /// This is a generic object: the player, a monster, an item, the stairs...
 /// It's always represented by a character on screen.
 #[derive(Debug)]
@@ -70,7 +77,7 @@ impl Object {
             color: color,
             blocks: blocks,
             alive: false,
-            standing: true
+            standing: false
         }
     }
 
@@ -96,13 +103,14 @@ impl Object {
     }
 
     /// move by the given amount, if the destination is not blocked
-    pub fn move_by(&mut self, dx: i32, dy: i32, dz: i32, map: &Map) {
-        if !map[((self.x + dx) + MAP_WIDTH * ((self.y + dy) + MAP_DEPTH * (self.z + dz))) as usize].blocked {
-            self.x += dx;
-            self.y += dy;
-            self.z += dz;
-        }
-    }
+    // pub fn move_by(&mut self, dx: i32, dy: i32, dz: i32, map: &Map) {
+    //     !is_blocked(self.x + dx, self.y + dy, map, objects);
+    //     if !map[((self.x + dx) + MAP_WIDTH * ((self.y + dy) + MAP_DEPTH * (self.z + dz))) as usize].blocked {
+    //         self.x += dx;
+    //         self.y += dy;
+    //         self.z += dz;
+    //     }
+    // }
 
     /// set the color and then draw the character that represents this object at its position
     pub fn draw(&self, con: &mut Console) {
@@ -114,6 +122,14 @@ impl Object {
     /// Erase the character that represents this object
     pub fn clear(&self, con: &mut Console) {
         con.put_char(self.x, self.y, ' ', BackgroundFlag::None);
+    }
+}
+
+/// move by the given amount, if the destination is not blocked
+fn move_by(id: usize, dx: i32, dy: i32, dz: i32, map: &Map, objects: &mut [Object]) {
+    let (x, y, z) = objects[id].pos();
+    if !is_blocked(x + dx, y + dy, z + dz, map, objects) {
+        objects[id].set_pos(x + dx, y + dy, z + dz);
     }
 }
 
@@ -187,30 +203,65 @@ fn render_all(root: &mut Root, con: &mut Offscreen, objects: &[Object], map: &Ma
     blit(con, (0, 0), (MAP_WIDTH, MAP_HEIGHT), root, (0, 0), 1.0, 1.0);
 }
 
-fn handle_keys(root: &mut Root, player: &mut Object, map: &Map) -> bool {
+fn handle_keys(root: &mut Root, objects: &mut [Object], map: &Map) -> PlayerAction {
     use tcod::input::Key;
     use tcod::input::KeyCode::*;
+    use PlayerAction::*;
 
     let key = root.wait_for_keypress(true);
-    match key {
-        Key { code: Enter, alt: true, ..} => {
+    let player_alive = objects[PLAYER].alive;
+    match (key, player_alive) {
+        (Key { code: Enter, alt: true, ..}, _) => {
             // Alt+Enter: toggle fullscreen
             let fullscreen = root.is_fullscreen();
             root.set_fullscreen(!fullscreen);
+            DidntTakeTurn
         }
-        Key { code: Escape, ..} => return true, // exit game
+        (Key { code: Escape, ..}, _) => Exit, // exit game
 
         // movement keys
-        Key { code: Up, .. } => player.move_by(0, -1, 0, map),
-        Key { code: Down, .. } => player.move_by(0, 1, 0, map),
-        Key { code: Left, .. } => player.move_by(-1, 0, 0, map),
-        Key { code: Right, .. } => player.move_by(1, 0, 0, map),
-        Key { printable: 's', .. } => player.standing(),
+        (Key { code: Up, .. }, true) => {
+            player_move_or_attack( 0, -1, 0, map, objects);
+            TookTurn
+        },
+        (Key { code: Down, .. }, true) => {
+            player_move_or_attack(0, 1, 0, map, objects);
+            TookTurn
+        },
+        (Key { code: Left, .. }, true) => {
+            player_move_or_attack(-1, 0, 0, map, objects);
+            TookTurn
+        },
+        (Key { code: Right, .. }, true) => {
+            player_move_or_attack(1, 0, 0, map, objects);
+            TookTurn
+        },
+        // Key { printable: 's', .. } => objects.standing(),
 
-        _ => {},
+        _ => DidntTakeTurn,
     }
+}
 
-    false
+fn player_move_or_attack(dx: i32, dy: i32, dz: i32, map: &Map, objects: &mut [Object]) {
+    // the coordinates the player is moving to/attacking
+    let x = objects[PLAYER].x + dx;
+    let y = objects[PLAYER].y + dy;
+    let z = objects[PLAYER].z + dz;
+
+    // try to find an attackable object there
+    let target_id = objects.iter().position(|object| {
+        object.pos() == (x, y, z)
+    });
+
+    // attack if target found, move otherwise
+    match target_id {
+        Some(target_id) => {
+            println!("The {} laughs at your puny efforts to attack him!", objects[target_id].name);
+        }
+        None => {
+            move_by(PLAYER, dx, dy, dz, map, objects);
+        }
+    }
 }
 
 fn mAlg(x: i32, y: i32, z:i32) -> usize {
@@ -230,11 +281,12 @@ fn main() {
     let mut con = Offscreen::new(MAP_WIDTH, MAP_HEIGHT);
 
     // create object representing the player
-    let player = Object::new(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 10, "Player", '@', colors::WHITE, true);
-    let mut previous_player_position = (-1, -1);
+    let mut player = Object::new(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 10, "Player", '@', colors::WHITE, true);
+    player.alive = true;
+    let mut previous_player_position = (-1, -1, 10);
     // create an NPC
-    let npc = Object::new(SCREEN_WIDTH / 2 - 5, SCREEN_HEIGHT / 2, 10, "Orc", '@', colors::YELLOW, true);
-
+    let mut npc = Object::new(SCREEN_WIDTH / 2 - 5, SCREEN_HEIGHT / 2, 10, "Orc", 'T', colors::YELLOW, true);
+    npc.alive = true;
     // the list of objects with those two
     let mut objects = [player, npc];
 
@@ -250,7 +302,7 @@ fn main() {
 
     while !root.window_closed() {
         // render the screen
-        let fov_recompute = previous_player_position != (objects[PLAYER].x, objects[PLAYER].y);
+        let fov_recompute = previous_player_position != (objects[PLAYER].x, objects[PLAYER].y, objects[PLAYER].z);
         render_all(&mut root, &mut con, &objects, &map, &mut fov_map, fov_recompute);
 
         root.flush();
@@ -261,11 +313,21 @@ fn main() {
         }
 
         // handle keys and exit game if needed
-        let player = &mut objects[PLAYER];
-        previous_player_position = (player.x, player.y);
-        let exit = handle_keys(&mut root, player, &map);
-        if exit {
+        //let player = &mut objects[PLAYER];
+        previous_player_position = objects[PLAYER].pos();
+        let player_action = handle_keys(&mut root, &mut objects, &map);
+        if player_action == PlayerAction::Exit {
             break
+        }
+
+        // let monsters take their turn
+        if objects[PLAYER].alive && player_action != PlayerAction::DidntTakeTurn {
+            for object in &objects {
+                // only if object is not player
+                if (object as *const _) != (&objects[PLAYER] as *const _) {
+                    println!("The {} growls!", object.name);
+                }
+            }
         }
     }
 }
